@@ -130,6 +130,23 @@ Then open `http://192.168.1.20:3000` in Chrome on Android and choose "Add to Hom
 to install it as a PWA. Replace `192.168.1.20` with your computer's address. Do not expose
 the control API to untrusted networks.
 
+### Native Android (Expo / EAS) — optional
+
+The Expo shell in `apps/mobile` is **informational**: it shows the safety/mode status and
+does not connect to the trading backend. If a native APK is required, it can be built with
+EAS using the committed `apps/mobile/eas.json` profiles:
+
+```bash
+cd apps/mobile
+npx eas-cli build -p android --profile preview   # internal APK
+npx eas-cli build -p android --profile production # Play Store AAB
+```
+
+This requires an Expo account and network access and has **not** been verified in this
+environment. The PWA above is the recommended, already-verified Android path, and it is the
+one that actually renders the live paper-trading dashboard. No native build submits
+transactions; live execution remains disabled everywhere.
+
 ## Killswitch
 
 `apps/killswitch` runs independently of the trader as a continuous monitor (it evaluates
