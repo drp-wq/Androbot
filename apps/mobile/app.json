@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Solana Trading System",
+    "slug": "solana-trading-system",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": true, "bundleIdentifier": "com.example.solanatradingsystem" },
+    "android": { "package": "com.example.solanatradingsystem" }
+  }
+}

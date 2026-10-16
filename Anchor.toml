@@ -1,0 +1,13 @@
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+vault = "Fg6PaFpoGXkYsidMpWxTWqkZ7FEfcYkgMQHGzFQqVjY"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test --manifest-path programs/vault/Cargo.toml"

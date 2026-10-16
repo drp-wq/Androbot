@@ -1,0 +1,25 @@
+{
+  "name": "@solana-system/tma",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "eslint app",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "clean": "rimraf .next"
+  },
+  "dependencies": { "next": "15.1.3", "react": "19.0.0", "react-dom": "19.0.0" },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.3",
+    "@types/react-dom": "19.0.2",
+    "eslint": "9.17.0",
+    "@typescript-eslint/eslint-plugin": "8.18.0",
+    "@typescript-eslint/parser": "8.18.0",
+    "rimraf": "6.0.1",
+    "typescript": "5.7.2"
+  }
+}
