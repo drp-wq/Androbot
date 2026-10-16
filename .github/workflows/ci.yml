@@ -23,12 +23,8 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Ensure no environment files are tracked
-        run: |
-          if git ls-files | grep -E '(^|/)\.env$'; then
-            echo "A .env file is tracked. Remove it before pushing."
-            exit 1
-          fi
+      - name: Scan tracked files for secrets and environment files
+        run: pnpm security:scan
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test

@@ -12,6 +12,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "security:scan": "node scripts/scan-secrets.mjs",
     "clean": "turbo run clean && rimraf node_modules"
   },
   "devDependencies": {
