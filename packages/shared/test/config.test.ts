@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadRuntimeConfig, parseBoolean, TradeIntentSchema } from "../src/index.js";
+import { loadRuntimeConfig, parseBoolean, redactSecrets, TradeIntentSchema, LIVE_TRADING_ACK_PHRASE } from "../src/index.js";
 
 test("defaults to devnet and disables mainnet trading", () => {
   const config = loadRuntimeConfig({});
@@ -14,6 +14,40 @@ test("rejects mainnet without explicit enablement", () => {
 
 test("rejects invalid boolean environment values", () => {
   assert.throws(() => parseBoolean("yes"), /exactly 'true' or 'false'/);
+});
+
+test("defaults to paper mode with sensible risk limits", () => {
+  const config = loadRuntimeConfig({});
+  assert.equal(config.tradingMode, "paper");
+  assert.equal(config.enableControlApi, false);
+  assert.ok(config.maxSlippageBps >= 1 && config.maxSlippageBps <= 1000);
+});
+
+test("rejects live mode without the explicit acknowledgement", () => {
+  assert.throws(
+    () => loadRuntimeConfig({ NETWORK: "mainnet", MAINNET_TRADING_ENABLED: "true", TRADING_MODE: "live" }),
+    /LIVE_TRADING_ACK/
+  );
+});
+
+test("allows live mode only with mainnet, enablement and the acknowledgement", () => {
+  const config = loadRuntimeConfig({
+    NETWORK: "mainnet",
+    MAINNET_TRADING_ENABLED: "true",
+    TRADING_MODE: "live",
+    LIVE_TRADING_ACK: LIVE_TRADING_ACK_PHRASE
+  });
+  assert.equal(config.tradingMode, "live");
+});
+
+test("control API requires a token when enabled", () => {
+  assert.throws(() => loadRuntimeConfig({ ENABLE_CONTROL_API: "true" }), /CONTROL_API_TOKEN/);
+});
+
+test("redacts secret-looking keys from log records", () => {
+  const redacted = redactSecrets({ apiKey: "abc", nested: { privateKey: "xyz", plain: 1 } }) as Record<string, unknown>;
+  assert.equal(redacted["apiKey"], "[redacted]");
+  assert.deepEqual(redacted["nested"], { privateKey: "[redacted]", plain: 1 });
 });
 
 test("validates trade intent shape and bounds", () => {

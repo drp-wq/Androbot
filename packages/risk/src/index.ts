@@ -28,6 +28,33 @@ export function validateRiskLimits(limits: RiskLimits): void {
   }
 }
 
+/**
+ * Deterministic position sizing. Given available cash, the per-trade cap and a
+ * confidence weight (basis points), returns the lamports to deploy. The result is
+ * always clamped to `[0, min(cash, maxPosition)]`; it never exceeds the cap.
+ */
+export function computePositionSizeLamports(args: {
+  readonly availableCashLamports: bigint;
+  readonly maxPositionLamports: bigint;
+  readonly confidenceBps: number;
+}): bigint {
+  if (args.availableCashLamports <= 0n) return 0n;
+  if (args.maxPositionLamports <= 0n) return 0n;
+  if (!Number.isSafeInteger(args.confidenceBps) || args.confidenceBps <= 0) return 0n;
+  const confidence = BigInt(Math.min(args.confidenceBps, 10_000));
+  const ceiling = args.maxPositionLamports < args.availableCashLamports ? args.maxPositionLamports : args.availableCashLamports;
+  return (ceiling * confidence) / 10_000n;
+}
+
+/**
+ * Realized drawdown for the current UTC day. Returns 0 when equity is at or above
+ * the day's starting equity. Never returns a negative value.
+ */
+export function dailyLossLamports(dayStartEquityLamports: bigint, currentEquityLamports: bigint): bigint {
+  if (currentEquityLamports >= dayStartEquityLamports) return 0n;
+  return dayStartEquityLamports - currentEquityLamports;
+}
+
 export function evaluateRisk(limits: RiskLimits, snapshot: RiskSnapshot): RiskDecision {
   validateRiskLimits(limits);
   const reasons: string[] = [];
