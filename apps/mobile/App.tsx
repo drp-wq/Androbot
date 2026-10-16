@@ -6,13 +6,13 @@ export default function App() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
       <View style={styles.container}>
-        <Text style={styles.eyebrow}>DEVNET · MILESTONE 1</Text>
+        <Text style={styles.eyebrow}>DEVNET · PAPER MODE</Text>
         <Text style={styles.title}>Solana Trading System</Text>
-        <Text style={styles.description}>Mobile shell ready. Trading, signing, push notifications, and Live Activities are not enabled in this milestone.</Text>
+        <Text style={styles.description}>Mobile shell ready. Paper/simulation trading is the default. Live execution, signing, push notifications, and Live Activities are not enabled.</Text>
         <View style={styles.status}>
           <Text style={styles.statusTitle}>Safety status</Text>
-          <Text style={styles.statusValue}>Trading disabled</Text>
-          <Text style={styles.statusNote}>This screen is informational and does not control funds.</Text>
+          <Text style={styles.statusValue}>Paper mode · no live execution</Text>
+          <Text style={styles.statusNote}>For the live operations dashboard, use the mobile web app from your Android browser.</Text>
         </View>
       </View>
     </SafeAreaView>
