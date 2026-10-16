@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { evaluateKillSwitch, runOnce, startKillswitchMonitor, type Heartbeat } from "../src/main.js";
+import { evaluateKillSwitch, heartbeatPath, runOnce, startKillswitchMonitor, stateDir, statePath, type Heartbeat } from "../src/main.js";
 
 function heartbeat(overrides: Partial<Heartbeat> = {}): Heartbeat {
   return {
@@ -29,6 +29,32 @@ test("creates a default unlocked state if no state file exists", async () => {
     assert.equal(disk.locked, false);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("default state and heartbeat paths honor STATE_DIR and explicit overrides", () => {
+  const originalStateDir = process.env.STATE_DIR;
+  const originalStatePath = process.env.KILLSWITCH_STATE_PATH;
+  const originalHeartbeatPath = process.env.KILLSWITCH_HEARTBEAT_PATH;
+  try {
+    delete process.env.KILLSWITCH_STATE_PATH;
+    delete process.env.KILLSWITCH_HEARTBEAT_PATH;
+    process.env.STATE_DIR = "/tmp/custom-state";
+    assert.equal(stateDir(), "/tmp/custom-state");
+    assert.equal(statePath(), "/tmp/custom-state/killswitch-state.json");
+    assert.equal(heartbeatPath(), "/tmp/custom-state/trader-status.json");
+
+    process.env.KILLSWITCH_STATE_PATH = "/tmp/explicit/lock.json";
+    process.env.KILLSWITCH_HEARTBEAT_PATH = "/tmp/explicit/hb.json";
+    assert.equal(statePath(), "/tmp/explicit/lock.json");
+    assert.equal(heartbeatPath(), "/tmp/explicit/hb.json");
+  } finally {
+    if (originalStateDir === undefined) delete process.env.STATE_DIR;
+    else process.env.STATE_DIR = originalStateDir;
+    if (originalStatePath === undefined) delete process.env.KILLSWITCH_STATE_PATH;
+    else process.env.KILLSWITCH_STATE_PATH = originalStatePath;
+    if (originalHeartbeatPath === undefined) delete process.env.KILLSWITCH_HEARTBEAT_PATH;
+    else process.env.KILLSWITCH_HEARTBEAT_PATH = originalHeartbeatPath;
   }
 });
 

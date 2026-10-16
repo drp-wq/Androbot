@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   KillswitchStateSchema,
   writeKillswitchState,
@@ -90,12 +90,21 @@ export function evaluateKillSwitch(
   return { shouldLock: false, reason: "healthy", detail: "all triggers clear" };
 }
 
+/**
+ * Shared state directory. The backend writes its heartbeat and lock under
+ * `STATE_DIR`, so the monitor must resolve the same defaults or it would watch
+ * different files than the trader.
+ */
+export function stateDir(): string {
+  return process.env.STATE_DIR ?? ".local";
+}
+
 export function statePath(): string {
-  return resolve(process.env.KILLSWITCH_STATE_PATH ?? ".local/killswitch-state.json");
+  return resolve(process.env.KILLSWITCH_STATE_PATH ?? join(stateDir(), "killswitch-state.json"));
 }
 
 export function heartbeatPath(): string {
-  return resolve(process.env.KILLSWITCH_HEARTBEAT_PATH ?? ".local/trader-status.json");
+  return resolve(process.env.KILLSWITCH_HEARTBEAT_PATH ?? join(stateDir(), "trader-status.json"));
 }
 
 async function readState(path: string): Promise<KillSwitchState> {
