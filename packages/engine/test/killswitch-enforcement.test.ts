@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createJsonLogger, persistKillswitchLock, persistKillswitchUnlock } from "@solana-system/shared";
@@ -128,5 +127,19 @@ test("a malformed lock file fails closed", async () => {
     assert.equal(summary.entries, 0);
     assert.equal(trader.status().locked, true);
     assert.match(trader.status().lockReason ?? "", /malformed/);
+  });
+});
+
+test("deleting an armed lock file keeps trading halted (fail closed)", async () => {
+  await withTempDir(async (directory) => {
+    const lockPath = join(directory, "killswitch-state.json");
+    await persistKillswitchUnlock(lockPath);
+    await rm(lockPath);
+    const trader = buildTrader(directory);
+    const summary = await trader.tick();
+    assert.equal(summary.entries, 0);
+    assert.equal(summary.paused, true);
+    assert.equal(trader.status().locked, true);
+    assert.match(trader.status().lockReason ?? "", /missing/);
   });
 });

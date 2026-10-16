@@ -82,6 +82,36 @@ test("a corrupt ledger fails closed: reconciliation off, trading paused, not rea
 });
 
 /**
+ * Deleting an armed killswitch lock file must not silently re-enable trading.
+ * The backend reads the durable lock directly, so this is the fail-closed contract
+ * at the HTTP boundary.
+ */
+test("deleting an armed killswitch lock fails closed over HTTP", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "backend-armed-delete-"));
+  await persistKillswitchUnlock(join(directory, "killswitch-state.json"));
+  await rm(join(directory, "killswitch-state.json"));
+
+  const app = createServer({ env: { NODE_ENV: "test", STATE_DIR: directory, SCANNER_INTERVAL_MS: "60000" } });
+  try {
+    await delay(150);
+
+    const ready = await app.inject({ method: "GET", url: "/ready" });
+    const readyBody = ready.json() as { ready: boolean; locked: boolean; lockReason: string | null };
+    assert.equal(readyBody.locked, true);
+    assert.equal(readyBody.ready, false);
+    assert.match(readyBody.lockReason ?? "", /missing/);
+
+    const status = await app.inject({ method: "GET", url: "/api/status" });
+    const body = status.json() as { locked: boolean; paused: boolean };
+    assert.equal(body.locked, true);
+    assert.equal(body.paused, true);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+/**
  * End-to-end paper-trading lifecycle through the real HTTP surface with the
  * autonomous loop enabled. This verifies the whole class of safety behavior the
  * project depends on: the loop ticks, the control API is token-gated, panic writes

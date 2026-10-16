@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  ensureKillswitchState,
   isKillswitchLocked,
   persistKillswitchLock,
   persistKillswitchUnlock,
-  readKillswitchLock
+  readKillswitchLock,
+  resolveKillswitchArmedPath
 } from "../src/index.js";
 
 async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
@@ -65,5 +67,48 @@ test("lock state with an unparseable timestamp is rejected", async () => {
     const read = await readKillswitchLock(path);
     assert.equal(read.ok, false);
     assert.equal(isKillswitchLocked(read), true);
+  });
+});
+
+test("deleting an armed lock file stays fail-closed instead of resetting to unlocked", async () => {
+  await withTempDir(async (directory) => {
+    const path = join(directory, "state.json");
+    await persistKillswitchUnlock(path);
+    await rm(path);
+    const read = await readKillswitchLock(path);
+    assert.equal(read.ok, false);
+    assert.equal(read.ok ? null : read.error, "killswitch_state_missing");
+    assert.equal(isKillswitchLocked(read), true);
+  });
+});
+
+test("state and armed sentinel are written with owner-only permissions", async () => {
+  await withTempDir(async (directory) => {
+    const path = join(directory, "state.json");
+    await persistKillswitchLock(path, "manual_lock");
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.equal((await stat(resolveKillswitchArmedPath(path))).mode & 0o777, 0o600);
+  });
+});
+
+test("leaves no temp files behind after an atomic write", async () => {
+  await withTempDir(async (directory) => {
+    const path = join(directory, "state.json");
+    await persistKillswitchLock(path, "manual_lock");
+    const leftovers = (await readdir(directory)).filter((name) => name.endsWith(".tmp"));
+    assert.deepEqual(leftovers, []);
+  });
+});
+
+test("ensureKillswitchState arms a fresh state but fails closed after deletion", async () => {
+  await withTempDir(async (directory) => {
+    const path = join(directory, "state.json");
+    const initial = await ensureKillswitchState(path);
+    assert.equal(initial.locked, false);
+
+    await rm(path);
+    const recovered = await ensureKillswitchState(path);
+    assert.equal(recovered.locked, true);
+    assert.equal(recovered.reason, "killswitch_state_missing");
   });
 });

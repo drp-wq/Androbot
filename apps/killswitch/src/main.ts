@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import {
-  KillswitchStateSchema,
+  ensureKillswitchState,
   loadEnvFileIfPresent,
   writeKillswitchState,
   type KillswitchState
@@ -26,10 +26,6 @@ export interface KillSwitchDecision {
   readonly shouldLock: boolean;
   readonly reason: string;
   readonly detail: string;
-}
-
-function isKillSwitchState(value: unknown): value is KillSwitchState {
-  return KillswitchStateSchema.safeParse(value).success;
 }
 
 function parseHeartbeat(value: unknown): Heartbeat | null {
@@ -109,23 +105,7 @@ export function heartbeatPath(): string {
 }
 
 async function readState(path: string): Promise<KillSwitchState> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (!isKillSwitchState(parsed)) throw new Error("Invalid killswitch state file schema.");
-    return parsed;
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      const initial: KillSwitchState = { locked: false, reason: null, changedAt: new Date().toISOString() };
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, `${JSON.stringify(initial, null, 2)}\n`, { flag: "wx" }).catch((writeError: unknown) => {
-        if (!(typeof writeError === "object" && writeError !== null && "code" in writeError && writeError.code === "EEXIST")) {
-          throw writeError;
-        }
-      });
-      return initial;
-    }
-    throw error;
-  }
+  return ensureKillswitchState(path);
 }
 
 async function readHeartbeat(path: string): Promise<Heartbeat | null> {
