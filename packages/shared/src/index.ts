@@ -19,6 +19,42 @@ export type TradingMode = z.infer<typeof TradingModeSchema>;
  */
 export const LIVE_TRADING_ACK_PHRASE = "I_UNDERSTAND_LIVE_TRADING_IS_UNSAFE";
 
+/**
+ * Default browser origins allowed to call the backend. These are loopback dev
+ * origins only; a remote site cannot forge `Origin: http://localhost:3000`, so
+ * this default cannot be abused by a third-party page. Any other origin must be
+ * listed explicitly via `CORS_ALLOWED_ORIGINS`.
+ */
+export const DEFAULT_CORS_ALLOWED_ORIGINS: readonly string[] = ["http://localhost:3000", "http://127.0.0.1:3000"];
+
+/**
+ * Parses the CORS allowlist. Fails closed: a wildcard is rejected outright and
+ * every entry must be a valid absolute origin.
+ */
+export function parseCorsAllowedOrigins(value: string | undefined): string[] {
+  if (value === undefined || value.trim() === "") return [...DEFAULT_CORS_ALLOWED_ORIGINS];
+  const origins = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+  if (origins.length === 0) return [...DEFAULT_CORS_ALLOWED_ORIGINS];
+  if (origins.includes("*")) {
+    throw new Error("CORS_ALLOWED_ORIGINS must be an explicit allowlist; '*' is not permitted.");
+  }
+  for (const origin of origins) {
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(`CORS_ALLOWED_ORIGINS contains an invalid origin: ${origin}`);
+    }
+    if (parsed.origin !== origin) {
+      throw new Error(`CORS_ALLOWED_ORIGINS must contain bare origins without paths: ${origin}`);
+    }
+  }
+  return origins;
+}
+
 const LamportsSchema = z.number().int().positive().safe();
 
 export const RuntimeConfigSchema = z
@@ -39,6 +75,7 @@ export const RuntimeConfigSchema = z
     scannerIntervalMs: z.number().int().min(100).max(3_600_000).default(5_000),
     enableControlApi: z.boolean().default(false),
     controlApiToken: z.string().min(16).optional(),
+    corsAllowedOrigins: z.array(z.string().min(1)).default([...DEFAULT_CORS_ALLOWED_ORIGINS]),
     stateDir: z.string().min(1).default(".local"),
     killswitchStatePath: z.string().min(1).default(".local/killswitch-state.json")
   })
@@ -89,6 +126,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     scannerIntervalMs: parsePositiveInt(env.SCANNER_INTERVAL_MS, 5_000, "SCANNER_INTERVAL_MS"),
     enableControlApi: parseBoolean(env.ENABLE_CONTROL_API, false),
     ...(env.CONTROL_API_TOKEN === undefined ? {} : { controlApiToken: env.CONTROL_API_TOKEN }),
+    corsAllowedOrigins: parseCorsAllowedOrigins(env.CORS_ALLOWED_ORIGINS),
     stateDir,
     killswitchStatePath: env.KILLSWITCH_STATE_PATH ?? join(stateDir, "killswitch-state.json")
   });

@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { loadEnvFileIfPresent, loadRuntimeConfig, parseBoolean, redactSecrets, TradeIntentSchema, LIVE_TRADING_ACK_PHRASE } from "../src/index.js";
+import { loadEnvFileIfPresent, loadRuntimeConfig, parseBoolean, parseCorsAllowedOrigins, redactSecrets, TradeIntentSchema, LIVE_TRADING_ACK_PHRASE } from "../src/index.js";
 
 test("defaults to devnet and disables mainnet trading", () => {
   const config = loadRuntimeConfig({});
@@ -45,6 +45,20 @@ test("allows live mode only with mainnet, enablement and the acknowledgement", (
 
 test("control API requires a token when enabled", () => {
   assert.throws(() => loadRuntimeConfig({ ENABLE_CONTROL_API: "true" }), /CONTROL_API_TOKEN/);
+});
+
+test("CORS allowlist is explicit and rejects a wildcard or malformed origins", () => {
+  assert.throws(() => parseCorsAllowedOrigins("*"), /explicit allowlist/);
+  assert.throws(() => parseCorsAllowedOrigins("not a url"), /invalid origin/);
+  assert.throws(() => parseCorsAllowedOrigins("http://localhost:3000/dashboard"), /bare origins/);
+  assert.deepEqual(parseCorsAllowedOrigins("http://a.example, http://b.example"), ["http://a.example", "http://b.example"]);
+  assert.ok(parseCorsAllowedOrigins(undefined).includes("http://localhost:3000"));
+});
+
+test("runtime config carries the parsed CORS allowlist", () => {
+  const config = loadRuntimeConfig({ CORS_ALLOWED_ORIGINS: "http://localhost:3000" });
+  assert.deepEqual(config.corsAllowedOrigins, ["http://localhost:3000"]);
+  assert.throws(() => loadRuntimeConfig({ CORS_ALLOWED_ORIGINS: "*" }), /explicit allowlist/);
 });
 
 test("loadEnvFileIfPresent returns false when the file is absent", () => {

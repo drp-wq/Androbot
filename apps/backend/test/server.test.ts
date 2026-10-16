@@ -113,3 +113,38 @@ test("control API requires a matching token", async () => {
     assert.equal((status.json() as { paused: boolean }).paused, true);
   });
 });
+
+test("CORS only echoes origins on the explicit allowlist", async () => {
+  await withServer({ CORS_ALLOWED_ORIGINS: "http://localhost:3000" }, async (app) => {
+    const allowed = await app.inject({ method: "GET", url: "/health", headers: { origin: "http://localhost:3000" } });
+    assert.equal(allowed.headers["access-control-allow-origin"], "http://localhost:3000");
+    assert.equal(allowed.headers["vary"], "Origin");
+
+    const blocked = await app.inject({ method: "GET", url: "/health", headers: { origin: "http://evil.example" } });
+    assert.equal(blocked.headers["access-control-allow-origin"], undefined);
+  });
+});
+
+test("CORS preflight is answered for allowed origins with the control headers", async () => {
+  await withServer({ CORS_ALLOWED_ORIGINS: "http://localhost:3000" }, async (app) => {
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/control/pause",
+      headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" }
+    });
+    assert.equal(response.statusCode, 204);
+    assert.equal(response.headers["access-control-allow-origin"], "http://localhost:3000");
+    assert.match(String(response.headers["access-control-allow-headers"] ?? ""), /authorization/);
+  });
+});
+
+test("CORS preflight from a disallowed origin carries no allow-origin header", async () => {
+  await withServer({ CORS_ALLOWED_ORIGINS: "http://localhost:3000" }, async (app) => {
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/api/control/pause",
+      headers: { origin: "http://evil.example", "access-control-request-method": "POST" }
+    });
+    assert.equal(response.headers["access-control-allow-origin"], undefined);
+  });
+});

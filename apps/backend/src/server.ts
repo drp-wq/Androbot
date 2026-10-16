@@ -35,6 +35,14 @@ function bearerToken(request: FastifyRequest): string | undefined {
   return undefined;
 }
 
+function applyCorsHeaders(reply: FastifyReply, origin: string): void {
+  reply.header("access-control-allow-origin", origin);
+  reply.header("vary", "Origin");
+  reply.header("access-control-allow-methods", "GET,POST,OPTIONS");
+  reply.header("access-control-allow-headers", "authorization,content-type,x-control-token");
+  reply.header("access-control-max-age", "600");
+}
+
 export function createServer(options: ServerOptions = {}): FastifyInstance {
   const env = options.env ?? process.env;
   const config: RuntimeConfig = loadRuntimeConfig(env);
@@ -49,6 +57,20 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
   });
 
   const stack: TradingStack = buildTradingStack(config, logger, env);
+
+  // Strict, explicit CORS allowlist. A wildcard is never used, and credentials are
+  // not enabled: the browser dashboard sends its control token per request. An
+  // origin that is not listed simply receives no CORS headers and is blocked.
+  app.addHook("onRequest", async (request, reply) => {
+    const origin = request.headers.origin;
+    if (typeof origin === "string" && config.corsAllowedOrigins.includes(origin)) {
+      applyCorsHeaders(reply, origin);
+    }
+    if (request.method === "OPTIONS") {
+      return reply.code(204).send();
+    }
+    return undefined;
+  });
 
   let reconciliation: LedgerReconciliationResult | null = null;
 
