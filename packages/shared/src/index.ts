@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { z } from "zod";
 import { isValidSolanaAddress } from "./address.js";
 
@@ -119,6 +120,26 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
 
 export function isPaperMode(config: RuntimeConfig): boolean {
   return config.tradingMode === "paper";
+}
+
+/**
+ * Loads a local `.env` file if it exists, so the documented `cp .env.example .env`
+ * workflow works without a shell export. Implemented with `process.loadEnvFile`,
+ * which never overrides values already present in the environment (the real
+ * environment always wins). Returns true when a file was loaded.
+ *
+ * A malformed file throws, which fails startup closed and surfaces the problem
+ * rather than silently running with partial configuration.
+ */
+export function loadEnvFileIfPresent(path = ".env"): boolean {
+  const resolved = resolve(path);
+  if (!existsSync(resolved)) return false;
+  try {
+    process.loadEnvFile(resolved);
+  } catch (error) {
+    throw new Error(`Failed to load environment file at ${resolved}: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
+  return true;
 }
 
 export function newIdempotencyKey(): string {

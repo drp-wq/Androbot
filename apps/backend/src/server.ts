@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import {
   createJsonLogger,
   isKillswitchLocked,
+  loadEnvFileIfPresent,
   loadRuntimeConfig,
   persistKillswitchLock,
   readKillswitchLock,
@@ -174,6 +175,9 @@ const isEntrypoint =
   process.argv[1]?.replaceAll("\\", "/").endsWith("/dist/server.js");
 
 if (isEntrypoint) {
+  // Load .env before reading config. The real environment always takes precedence,
+  // and a missing file is fine. A malformed file throws and fails startup closed.
+  loadEnvFileIfPresent();
   const config = loadRuntimeConfig();
   const app = createServer();
   app

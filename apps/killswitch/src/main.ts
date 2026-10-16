@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   KillswitchStateSchema,
+  loadEnvFileIfPresent,
   writeKillswitchState,
   type KillswitchState
 } from "@solana-system/shared";
@@ -230,6 +231,7 @@ const isEntrypoint =
   process.argv[1]?.replaceAll("\\", "/").endsWith("/dist/main.js");
 
 if (isEntrypoint) {
+  loadEnvFileIfPresent();
   const unlock = process.argv.includes("--unlock");
   const once = process.argv.includes("--once");
   const state = statePath();

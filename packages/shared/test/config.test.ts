@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { loadRuntimeConfig, parseBoolean, redactSecrets, TradeIntentSchema, LIVE_TRADING_ACK_PHRASE } from "../src/index.js";
+import { loadEnvFileIfPresent, loadRuntimeConfig, parseBoolean, redactSecrets, TradeIntentSchema, LIVE_TRADING_ACK_PHRASE } from "../src/index.js";
 
 test("defaults to devnet and disables mainnet trading", () => {
   const config = loadRuntimeConfig({});
@@ -42,6 +45,31 @@ test("allows live mode only with mainnet, enablement and the acknowledgement", (
 
 test("control API requires a token when enabled", () => {
   assert.throws(() => loadRuntimeConfig({ ENABLE_CONTROL_API: "true" }), /CONTROL_API_TOKEN/);
+});
+
+test("loadEnvFileIfPresent returns false when the file is absent", () => {
+  assert.equal(loadEnvFileIfPresent(join(tmpdir(), "definitely-missing-env-file")), false);
+});
+
+test("loadEnvFileIfPresent loads new keys but never overrides the real environment", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "shared-env-"));
+  const path = join(directory, ".env");
+  const previous = process.env.SOLANA_SYSTEM_TEST_LOADED;
+  const previousOverride = process.env.SOLANA_SYSTEM_TEST_OVERRIDE;
+  try {
+    await writeFile(path, "SOLANA_SYSTEM_TEST_LOADED=from-file\nSOLANA_SYSTEM_TEST_OVERRIDE=from-file\n", "utf8");
+    delete process.env.SOLANA_SYSTEM_TEST_LOADED;
+    process.env.SOLANA_SYSTEM_TEST_OVERRIDE = "from-shell";
+    assert.equal(loadEnvFileIfPresent(path), true);
+    assert.equal(process.env.SOLANA_SYSTEM_TEST_LOADED, "from-file");
+    assert.equal(process.env.SOLANA_SYSTEM_TEST_OVERRIDE, "from-shell");
+  } finally {
+    if (previous === undefined) delete process.env.SOLANA_SYSTEM_TEST_LOADED;
+    else process.env.SOLANA_SYSTEM_TEST_LOADED = previous;
+    if (previousOverride === undefined) delete process.env.SOLANA_SYSTEM_TEST_OVERRIDE;
+    else process.env.SOLANA_SYSTEM_TEST_OVERRIDE = previousOverride;
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("redacts secret-looking keys from log records", () => {
