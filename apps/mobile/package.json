@@ -2,28 +2,31 @@
   "name": "@solana-system/mobile",
   "version": "0.1.0",
   "private": true,
-  "main": "node_modules/expo/AppEntry.js",
+  "main": "index.ts",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "build": "tsc --noEmit",
-    "lint": "eslint App.tsx",
+    "lint": "eslint App.tsx index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test",
     "clean": "rimraf .expo"
   },
   "dependencies": {
-    "expo": "52.0.27",
+    "@babel/runtime": "7.29.10",
+    "expo": "52.0.49",
+    "expo-asset": "~11.0.5",
     "expo-status-bar": "2.0.1",
     "react": "18.3.1",
-    "react-native": "0.76.6"
+    "react-native": "0.76.9"
   },
   "devDependencies": {
     "@types/react": "18.3.12",
-    "eslint": "9.17.0",
     "@typescript-eslint/eslint-plugin": "8.18.0",
     "@typescript-eslint/parser": "8.18.0",
+    "eslint": "9.17.0",
+    "expo-modules-autolinking": "2.0.8",
     "rimraf": "6.0.1",
     "typescript": "5.7.2"
   }

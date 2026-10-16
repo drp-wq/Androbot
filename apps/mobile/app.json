@@ -6,7 +6,21 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": true, "bundleIdentifier": "com.example.solanatradingsystem" },
-    "android": { "package": "com.example.solanatradingsystem" }
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.solanatradingsystem"
+    },
+    "android": {
+      "package": "com.example.solanatradingsystem"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d7511694-02cd-4ef0-9f9e-78895ba2852b"
+      }
+    },
+    "owner": "androidros-team",
+    "plugins": [
+      "expo-asset"
+    ]
   }
 }
