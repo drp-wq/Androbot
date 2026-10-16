@@ -110,3 +110,28 @@ If `pnpm install` fails due to version/platform issues, fix and record the actua
 
 ## GitHub workflow
 The README contains commands to initialize Git, commit, set a GitHub remote, and push. The user must replace the example remote URL and authenticate with GitHub. Do not include secrets or keypair files in commits.
+
+## Status update: audit hardening (branch `feat/safety-hardening`)
+
+An end-to-end read-only audit found that the paper/simulation system is already
+implemented and verified, not a bare milestone-2 scaffold. The following hardening was
+added on branch `feat/safety-hardening` (branched from `feat/safety-completion`):
+
+1. **Execution-request validation at the router boundary** — `validateExecutionRequest`
+   in `packages/engine/src/validation.ts`, enforced in `PaperExecutionRouter` (fail closed).
+2. **Killswitch path consistency** — the monitor's default state/heartbeat paths now derive
+   from `STATE_DIR`, matching the backend instead of hardcoding `.local/...`.
+3. **`.env` loading** — `loadEnvFileIfPresent()` (uses `process.loadEnvFile`, real env wins)
+   called at the backend and killswitch entrypoints so `cp .env.example .env` works.
+4. **Offline secret scanner** — `scripts/scan-secrets.mjs` + `pnpm security:scan`, wired
+   into CI, replacing the narrow `.env`-only check.
+5. **Android deployment path** — PWA icon in the web manifest, `apps/mobile/eas.json`
+   profiles, and documented native build (unverified).
+6. **Backend integration test** — real HTTP surface with the autonomous loop: panic is
+   token-gated, writes a durable lock, halts reported trading, `resume()` cannot clear it,
+   and only an operator unlock re-enables.
+
+Verified in this environment: `pnpm lint` 9/9, `pnpm typecheck` 13/13, `pnpm test` 71 pass
+(engine 32, shared 19, backend 12, killswitch 8), `pnpm build` 9/9, `pnpm security:scan`
+pass. Rust/Anchor tests remain **unverified** (no `cargo`/Anchor CLI here). Nothing was
+pushed.

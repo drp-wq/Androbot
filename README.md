@@ -27,6 +27,12 @@ and a monitoring API with an Android-friendly operations dashboard.
   malformed lock state halts trading and cannot be cleared by `resume()`.
 - Mint addresses (live `MARKET_MINTS`, trade intents) must be valid base58 32-byte Solana
   addresses; malformed values are rejected at startup instead of being silently dropped.
+- Every execution request is re-validated at the router boundary (mint, side, symbol,
+  reference price, amount, slippage cap, idempotency key) and rejected if malformed.
+- A local `.env` is loaded at startup if present; values already set in the real
+  environment always take precedence.
+- The killswitch monitor and backend resolve state/heartbeat paths from the same
+  `STATE_DIR`, so they always watch the same files.
 - No private keys, seed phrases, RPC secrets, or exchange credentials belong in this
   repository. `.env` is git-ignored; `.env.example` contains only non-secret defaults.
 
@@ -42,12 +48,29 @@ and a monitoring API with an Android-friendly operations dashboard.
 corepack enable
 corepack prepare pnpm@9.15.4 --activate
 pnpm install
-cp .env.example .env
+cp .env.example .env   # optional; loaded automatically at startup, real env wins
+pnpm security:scan
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+### Verification status
+
+The following were executed in this development environment and passed:
+
+| Command | Result |
+| --- | --- |
+| `pnpm lint` | 9/9 tasks successful |
+| `pnpm typecheck` | 13/13 tasks successful |
+| `pnpm test` | 71 tests pass, 0 fail (engine 32, shared 19, backend 12, killswitch 8) |
+| `pnpm build` | 9/9 tasks successful |
+| `pnpm security:scan` | passed (no secrets in tracked files) |
+
+The Anchor/Rust vault tests **have not been run here** because `cargo`/Anchor are not
+installed in this environment. Do not treat the on-chain program as verified until
+`cargo test --manifest-path programs/vault/Cargo.toml` is run in a Rust-capable environment.
 
 ## Run the paper trading system
 
@@ -188,6 +211,17 @@ local-validator integration tests, a security review, and an explicit mainnet re
 Real DEX/swap execution, SPL-token custody, signer/keystore and KMS integration, Telegram
 bot authentication, push notifications, and iOS Live Activities. Live execution rejects all
 orders. The Expo app is informational.
+
+Also note:
+
+- The portfolio is **in-memory**. The append-only ledger records a write-ahead intent before
+  every order, but ledger reconciliation/replay on restart is **not implemented** yet, so a
+  restart begins from the configured starting balance. Do not rely on portfolio state
+  surviving a restart.
+- The on-chain program stores daily-loss and position-count limits as policy metadata only;
+  it does not yet account for positions or portfolio-wide daily loss.
+- The native Android/EAS build path is documented but unverified (requires an Expo account
+  and network). The verified Android path is the PWA dashboard.
 
 ## Git
 
