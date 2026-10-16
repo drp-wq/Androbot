@@ -1,5 +1,6 @@
 import { SafetyError } from "@solana-system/shared";
 import type { ExecutionRequest, ExecutionResult, ExecutionRouter } from "./types.js";
+import { firstExecutionRequestProblem } from "./validation.js";
 
 export interface PaperExecutionConfig {
   readonly feeBps: number;
@@ -25,8 +26,8 @@ export class PaperExecutionRouter implements ExecutionRouter {
   }
 
   async execute(request: ExecutionRequest): Promise<ExecutionResult> {
-    if (request.referencePriceLamports <= 0n) return reject("invalid_reference_price");
-    if (request.maxSlippageBps <= 0 || request.maxSlippageBps > 1000) return reject("invalid_slippage_cap");
+    const problem = firstExecutionRequestProblem(request);
+    if (problem !== null) return reject(problem);
     const slippage = Math.min(this.config.slippageBps, request.maxSlippageBps);
     const txRef = `paper:${request.idempotencyKey.slice(0, 8)}`;
 

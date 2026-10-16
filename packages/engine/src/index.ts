@@ -4,6 +4,7 @@ export * from "./market.js";
 export * from "./solana.js";
 export * from "./strategy.js";
 export * from "./portfolio.js";
+export * from "./validation.js";
 export * from "./execution.js";
 export * from "./trader.js";
 
