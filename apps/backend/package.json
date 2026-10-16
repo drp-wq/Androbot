@@ -1,0 +1,30 @@
+{
+  "name": "@solana-system/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@solana-system/engine": "workspace:*",
+    "@solana-system/risk": "workspace:*",
+    "@solana-system/shared": "workspace:*",
+    "fastify": "5.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "eslint": "9.17.0",
+    "@typescript-eslint/eslint-plugin": "8.18.0",
+    "@typescript-eslint/parser": "8.18.0",
+    "rimraf": "6.0.1",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2"
+  }
+}
