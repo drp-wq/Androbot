@@ -6,6 +6,8 @@ out/
 dist/
 build/
 coverage/
+.local/
+*.tsbuildinfo
 .expo/
 .expo-shared/
 web-build/
