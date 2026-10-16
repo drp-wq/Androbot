@@ -1,8 +1,14 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { timingSafeEqual } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { createJsonLogger, loadRuntimeConfig, type RuntimeConfig, type StructuredLogger } from "@solana-system/shared";
+import {
+  createJsonLogger,
+  isKillswitchLocked,
+  loadRuntimeConfig,
+  persistKillswitchLock,
+  readKillswitchLock,
+  type RuntimeConfig,
+  type StructuredLogger
+} from "@solana-system/shared";
 import { buildTradingStack, type TradingStack } from "./bootstrap.js";
 
 export interface ServerOptions {
@@ -24,13 +30,6 @@ function bearerToken(request: FastifyRequest): string | undefined {
   const custom = request.headers["x-control-token"];
   if (typeof custom === "string") return custom;
   return undefined;
-}
-
-async function writeKillswitchLock(stateDir: string, reason: string): Promise<void> {
-  const path = join(stateDir, "killswitch-state.json");
-  const payload = { locked: true, reason, changedAt: new Date().toISOString() };
-  await mkdir(stateDir, { recursive: true });
-  await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 export function createServer(options: ServerOptions = {}): FastifyInstance {
@@ -70,11 +69,19 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
     timestamp: new Date().toISOString()
   }));
 
-  app.get("/ready", async () => ({
-    ready: true,
-    mode: config.tradingMode,
-    note: "Paper mode is the default. Live execution is disabled until a reviewed signer and DEX router exist."
-  }));
+  app.get("/ready", async () => {
+    const lock = await readKillswitchLock(config.killswitchStatePath);
+    const locked = isKillswitchLocked(lock);
+    return {
+      ready: !locked,
+      locked,
+      lockReason: !lock.ok ? lock.error : lock.state.reason,
+      mode: config.tradingMode,
+      note: locked
+        ? "Killswitch lock is engaged. Trading is halted until the lock is explicitly cleared."
+        : "Paper mode is the default. Live execution is disabled until a reviewed signer and DEX router exist."
+    };
+  });
 
   app.get("/api/status", async () => stack.trader.status());
 
@@ -141,16 +148,19 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
     if (!authorizeControl(request, reply)) return reply;
     const reason = (request.body as { reason?: string } | undefined)?.reason ?? "manual_panic";
     stack.trader.panic(reason);
-    await writeKillswitchLock(config.stateDir, `panic:${reason}`);
+    await persistKillswitchLock(config.killswitchStatePath, `panic:${reason}`);
     return { paused: true, locked: true, reason };
   });
 
   if (options.autostart !== false) {
-    const timer = setInterval(() => {
+    const runTick = (): void => {
       void stack.trader.tick().catch((error: unknown) => {
         app.log.error({ err: error instanceof Error ? error.message : "unknown" }, "trader tick failed");
       });
-    }, config.scannerIntervalMs);
+    };
+    // Tick immediately so the independent killswitch lock is honored at startup.
+    runTick();
+    const timer = setInterval(runTick, config.scannerIntervalMs);
     app.addHook("onClose", async () => {
       clearInterval(timer);
     });

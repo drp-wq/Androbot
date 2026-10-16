@@ -23,6 +23,10 @@ and a monitoring API with an Android-friendly operations dashboard.
   is set; it fails closed otherwise.
 - Any missing, ambiguous, or invalid safety signal (RPC error, malformed market data,
   unparseable risk value) fails closed.
+- The independent killswitch lock is enforced on every tick; locked, unreadable, or
+  malformed lock state halts trading and cannot be cleared by `resume()`.
+- Mint addresses (live `MARKET_MINTS`, trade intents) must be valid base58 32-byte Solana
+  addresses; malformed values are rejected at startup instead of being silently dropped.
 - No private keys, seed phrases, RPC secrets, or exchange credentials belong in this
   repository. `.env` is git-ignored; `.env.example` contains only non-secret defaults.
 
@@ -128,14 +132,22 @@ the control API to untrusted networks.
 
 ## Killswitch
 
-`apps/killswitch` runs independently of the trader. It reads the trader heartbeat and locks
-state on: manual lock/panic, panic pause, repeated RPC failures, daily-loss limit breach, a
-stale heartbeat, or a malformed heartbeat. Locks are durable and require an explicit
-`--unlock`. It never reports a position as closed, because it does not execute trades.
+`apps/killswitch` runs independently of the trader as a continuous monitor (it evaluates
+immediately and then every `KILLSWITCH_INTERVAL_MS`, default 5s). It reads the trader
+heartbeat and locks durable state on: manual lock/panic, panic pause, repeated RPC failures,
+daily-loss limit breach, a stale heartbeat, or a malformed heartbeat. It never reports a
+position as closed, because it does not execute trades.
+
+The lock is **enforced, not advisory**: the trader reads
+`<STATE_DIR>/killswitch-state.json` on every tick. Any locked, unreadable, or malformed lock
+state halts all entries and exits and fails closed; `resume()` cannot override it. `/ready`
+reports `locked: true` and `/api/status` exposes `locked`/`lockReason`. Clearing the lock
+requires an explicit operator unlock.
 
 ```bash
-pnpm --filter @solana-system/killswitch dev
-pnpm --filter @solana-system/killswitch start -- --unlock
+pnpm --filter @solana-system/killswitch dev           # continuous monitor
+pnpm --filter @solana-system/killswitch start -- --once   # single evaluation
+pnpm --filter @solana-system/killswitch start -- --unlock # clear the lock, then exit
 ```
 
 ## Anchor vault program (milestone 2)

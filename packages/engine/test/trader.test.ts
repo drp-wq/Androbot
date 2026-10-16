@@ -87,7 +87,8 @@ test("paper trader enters, hits stop loss, breaches daily loss and pauses", asyn
       stopLossBps: 2_000,
       takeProfitBps: 5_000,
       maxRpcFailureStreak: 3,
-      heartbeatPath: join(directory, "status.json")
+      heartbeatPath: join(directory, "status.json"),
+      killswitchStatePath: join(directory, "killswitch-state.json")
     },
     {
       market,
@@ -141,7 +142,8 @@ test("paused trader performs no work", async () => {
       stopLossBps: 2_000,
       takeProfitBps: 5_000,
       maxRpcFailureStreak: 3,
-      heartbeatPath: join(directory, "status.json")
+      heartbeatPath: join(directory, "status.json"),
+      killswitchStatePath: join(directory, "killswitch-state.json")
     },
     {
       market,

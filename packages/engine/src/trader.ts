@@ -1,8 +1,19 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { classifyMarketRegime, type MarketObservation } from "@solana-system/ai";
-import { computePositionSizeLamports, evaluateRisk, type RiskLimits } from "@solana-system/risk";
-import { newIdempotencyKey, type StructuredLogger } from "@solana-system/shared";
+import {
+  computePositionSizeLamports,
+  estimateSlippageBps,
+  evaluateRisk,
+  type RiskLimits
+} from "@solana-system/risk";
+import {
+  isKillswitchLocked,
+  newIdempotencyKey,
+  readKillswitchLock,
+  type KillswitchLockRead,
+  type StructuredLogger
+} from "@solana-system/shared";
 import { verifyTokenSafety } from "./safety.js";
 import type {
   ExecutionResult,
@@ -31,6 +42,8 @@ export interface TraderConfig {
   readonly takeProfitBps: number;
   readonly maxRpcFailureStreak: number;
   readonly heartbeatPath: string;
+  /** Durable independent killswitch lock. Trading halts whenever this is locked or unreadable. */
+  readonly killswitchStatePath: string;
 }
 
 export interface TraderDeps {
@@ -58,6 +71,8 @@ export interface TraderStatus {
   readonly network: string;
   readonly paused: boolean;
   readonly pauseReason: string | null;
+  readonly locked: boolean;
+  readonly lockReason: string | null;
   readonly lastTickAt: string | null;
   readonly ticks: number;
   readonly rpcFailureStreak: number;
@@ -127,6 +142,8 @@ function buildObservation(history: readonly PricePoint[]): MarketObservation {
 export class AutonomousTrader {
   private paused = false;
   private pauseReason: string | null = null;
+  private killswitchLocked = false;
+  private killswitchReason: string | null = null;
   private readonly events: TradeEvent[] = [];
   private readonly lastPrices = new Map<Mint, bigint>();
   private rpcFailureStreak = 0;
@@ -149,7 +166,7 @@ export class AutonomousTrader {
   resume(): void {
     this.paused = false;
     this.pauseReason = null;
-    this.record("info", "trading_resumed", null, {});
+    this.record("info", "trading_resume_requested", null, { killswitchLocked: this.killswitchLocked });
   }
 
   panic(reason: string): void {
@@ -175,11 +192,14 @@ export class AutonomousTrader {
       markPriceLamports: (this.lastPrices.get(position.mint) ?? position.averageEntryLamports).toString(),
       openedAt: position.openedAt
     }));
+    const paused = this.paused || this.killswitchLocked;
     return {
       mode: this.config.mode,
       network: this.config.network,
-      paused: this.paused,
-      pauseReason: this.pauseReason,
+      paused,
+      pauseReason: this.killswitchLocked ? this.killswitchReason : this.pauseReason,
+      locked: this.killswitchLocked,
+      lockReason: this.killswitchReason,
       lastTickAt: this.lastTickAt,
       ticks: this.ticks,
       rpcFailureStreak: this.rpcFailureStreak,
@@ -205,6 +225,8 @@ export class AutonomousTrader {
       network: status.network,
       paused: status.paused,
       pauseReason: status.pauseReason,
+      locked: status.locked,
+      lockReason: status.lockReason,
       openPositions: status.openPositions,
       equityLamports: status.equityLamports,
       dailyLossLamports: status.dailyLossLamports,
@@ -225,7 +247,9 @@ export class AutonomousTrader {
     let exits = 0;
     let rejected = 0;
 
-    if (this.paused) {
+    const locked = await this.refreshKillswitch();
+    if (this.paused || locked) {
+      await this.writeHeartbeat();
       return { at, marketsObserved: 0, entries: 0, exits: 0, rejected: 0, paused: true };
     }
 
@@ -258,6 +282,28 @@ export class AutonomousTrader {
 
     await this.writeHeartbeat();
     return { at, marketsObserved: candidates.length, entries, exits, rejected, paused: this.paused };
+  }
+
+  /**
+   * Reads the durable independent killswitch lock. Unreadable or malformed state is
+   * treated as locked (fail closed). The lock can only be cleared by the operator
+   * writing an unlocked state; `resume()` cannot override it.
+   */
+  private async refreshKillswitch(): Promise<boolean> {
+    let read: KillswitchLockRead;
+    try {
+      read = await readKillswitchLock(this.config.killswitchStatePath);
+    } catch {
+      read = { ok: false, error: "killswitch_state_unreadable" };
+    }
+    const locked = isKillswitchLocked(read);
+    const reason = locked ? (read.ok ? `lock:${read.state.reason ?? "unspecified"}` : `lock:${read.error}`) : null;
+    if (locked && !this.killswitchLocked) {
+      this.record("error", "killswitch_locked", null, { reason: reason ?? "unknown" });
+    }
+    this.killswitchLocked = locked;
+    this.killswitchReason = reason;
+    return locked;
   }
 
   private async checkConnectivity(): Promise<boolean> {
@@ -369,12 +415,13 @@ export class AutonomousTrader {
       if (proposedPositionLamports <= 0n) continue;
 
       const currentEquity = this.deps.portfolio.equityLamports(this.lastPrices);
+      const estimatedSlippageBps = estimateSlippageBps(proposedPositionLamports, candidate.quote.liquidityLamports);
       const decision = evaluateRisk(this.deps.limits, {
         proposedPositionLamports,
         dailyLossLamports: this.deps.portfolio.dailyLoss(currentEquity),
         openPositions: this.deps.portfolio.openPositionsCount(),
-        proposedSlippageBps: this.deps.limits.maxSlippageBps,
-        tradingPaused: this.paused
+        proposedSlippageBps: estimatedSlippageBps,
+        tradingPaused: this.paused || this.killswitchLocked
       });
       if (!decision.allowed) {
         rejected += 1;
@@ -417,8 +464,47 @@ export class AutonomousTrader {
       return false;
     }
 
+    if (result.status !== "filled") {
+      await this.deps.ledger.append({
+        type: "reject",
+        data: {
+          mint: candidate.mint,
+          side,
+          status: result.status,
+          reason: result.reason,
+          quantityTokens: result.quantityTokens.toString(),
+          priceLamports: result.priceLamports.toString(),
+          notionalLamports: result.notionalLamports.toString(),
+          feeLamports: result.feeLamports.toString(),
+          txRef: result.txRef
+        }
+      });
+      this.record("warn", "execution_rejected", candidate.mint, { reason: result.reason });
+      return false;
+    }
+
+    // Update the portfolio first. Portfolio methods validate before mutating, so a
+    // throw means no state change. Only a confirmed portfolio update is recorded as
+    // a fill; otherwise a compensating reject is written so the ledger never shows a
+    // fill for a position that was not applied.
+    try {
+      if (side === "buy") {
+        this.deps.portfolio.applyBuy(candidate.mint, candidate.quote.symbol, result.quantityTokens, result.priceLamports, result.feeLamports);
+      } else {
+        this.deps.portfolio.applySell(candidate.mint, result.quantityTokens, result.priceLamports, result.feeLamports);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown";
+      this.record("error", "portfolio_update_failed", candidate.mint, { error: detail, idempotencyKey });
+      await this.deps.ledger.append({
+        type: "reject",
+        data: { mint: candidate.mint, side, status: "rejected", reason: `portfolio_update_failed:${detail}`, idempotencyKey }
+      });
+      return false;
+    }
+
     await this.deps.ledger.append({
-      type: result.status === "filled" ? "fill" : "reject",
+      type: "fill",
       data: {
         mint: candidate.mint,
         side,
@@ -431,22 +517,6 @@ export class AutonomousTrader {
         txRef: result.txRef
       }
     });
-
-    if (result.status !== "filled") {
-      this.record("warn", "execution_rejected", candidate.mint, { reason: result.reason });
-      return false;
-    }
-
-    try {
-      if (side === "buy") {
-        this.deps.portfolio.applyBuy(candidate.mint, candidate.quote.symbol, result.quantityTokens, result.priceLamports, result.feeLamports);
-      } else {
-        this.deps.portfolio.applySell(candidate.mint, result.quantityTokens, result.priceLamports, result.feeLamports);
-      }
-    } catch (error) {
-      this.record("error", "portfolio_update_failed", candidate.mint, { error: error instanceof Error ? error.message : "unknown" });
-      return false;
-    }
 
     this.record("info", side === "buy" ? "entry_filled" : "exit_filled", candidate.mint, {
       reason,

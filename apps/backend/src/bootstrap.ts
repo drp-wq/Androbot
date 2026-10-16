@@ -18,7 +18,7 @@ import {
 } from "@solana-system/engine";
 import type { RiskLimits } from "@solana-system/risk";
 import type { RuntimeConfig, StructuredLogger } from "@solana-system/shared";
-import { isPaperMode } from "@solana-system/shared";
+import { isPaperMode, parseSolanaAddressList } from "@solana-system/shared";
 import { join } from "node:path";
 
 export interface TradingStack {
@@ -54,10 +54,7 @@ function resolveLiveMarkets(env: NodeJS.ProcessEnv): readonly Mint[] {
   if (raw === undefined || raw.trim() === "") {
     throw new Error("Live mode requires MARKET_MINTS (comma-separated mint addresses).");
   }
-  return raw
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
+  return parseSolanaAddressList(raw, "MARKET_MINTS");
 }
 
 /**
@@ -106,7 +103,8 @@ export function buildTradingStack(config: RuntimeConfig, logger: StructuredLogge
       stopLossBps: 1_500,
       takeProfitBps: 3_000,
       maxRpcFailureStreak: 3,
-      heartbeatPath: join(stateDir, "trader-status.json")
+      heartbeatPath: join(stateDir, "trader-status.json"),
+      killswitchStatePath: config.killswitchStatePath
     },
     {
       market,

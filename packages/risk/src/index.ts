@@ -47,6 +47,20 @@ export function computePositionSizeLamports(args: {
 }
 
 /**
+ * Approximates price impact for a trade as a fraction of pool liquidity, in basis
+ * points. This is a conservative monotonic model (impact grows with trade size),
+ * not a precise AMM formula. It is used so the slippage risk gate is meaningful:
+ * a trade that is large relative to available liquidity produces a high estimate
+ * and can be rejected. Returns 10_000 (100%) when inputs are invalid.
+ */
+export function estimateSlippageBps(notionalLamports: bigint, liquidityLamports: bigint): number {
+  if (notionalLamports <= 0n || liquidityLamports <= 0n) return 10_000;
+  const impactBps = (notionalLamports * 10_000n) / liquidityLamports;
+  if (impactBps > 10_000n) return 10_000;
+  return Number(impactBps);
+}
+
+/**
  * Realized drawdown for the current UTC day. Returns 0 when equity is at or above
  * the day's starting equity. Never returns a negative value.
  */

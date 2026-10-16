@@ -1,11 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import {
+  KillswitchStateSchema,
+  writeKillswitchState,
+  type KillswitchState
+} from "@solana-system/shared";
 
-export interface KillSwitchState {
-  readonly locked: boolean;
-  readonly reason: string | null;
-  readonly changedAt: string;
-}
+export type KillSwitchState = KillswitchState;
 
 export interface Heartbeat {
   readonly paused: boolean;
@@ -27,13 +28,7 @@ export interface KillSwitchDecision {
 }
 
 function isKillSwitchState(value: unknown): value is KillSwitchState {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate["locked"] === "boolean" &&
-    (typeof candidate["reason"] === "string" || candidate["reason"] === null) &&
-    typeof candidate["changedAt"] === "string"
-  );
+  return KillswitchStateSchema.safeParse(value).success;
 }
 
 function parseHeartbeat(value: unknown): Heartbeat | null {
@@ -135,8 +130,7 @@ async function readHeartbeat(path: string): Promise<Heartbeat | null> {
 }
 
 async function writeState(path: string, state: KillSwitchState): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await writeKillswitchState(path, state);
 }
 
 export interface RunOnceOptions {
@@ -181,14 +175,78 @@ export async function runOnce(path = statePath(), options: RunOnceOptions = {}):
   return state;
 }
 
+export interface KillswitchMonitor {
+  stop(): Promise<void>;
+}
+
+export interface KillswitchMonitorOptions extends RunOnceOptions {
+  readonly intervalMs?: number;
+  readonly onError?: (error: unknown) => void;
+}
+
+/**
+ * Continuously evaluates the killswitch on an interval, independently of the trader.
+ * The first evaluation runs immediately. Overlapping evaluations are skipped so a slow
+ * read can never pile up. `stop()` is idempotent and clears the interval.
+ */
+export function startKillswitchMonitor(path = statePath(), options: KillswitchMonitorOptions = {}): KillswitchMonitor {
+  const configured = options.intervalMs ?? Number(process.env.KILLSWITCH_INTERVAL_MS ?? "5000");
+  const intervalMs = Number.isFinite(configured) && configured > 0 ? configured : 5000;
+  let inFlight = false;
+
+  const evaluate = (): void => {
+    if (inFlight) return;
+    inFlight = true;
+    runOnce(path, options)
+      .catch((error: unknown) => {
+        if (options.onError) options.onError(error);
+        else process.stderr.write(`killswitch evaluation failed: ${error instanceof Error ? error.message : "unknown"}\n`);
+      })
+      .finally(() => {
+        inFlight = false;
+      });
+  };
+
+  evaluate();
+  const timer = setInterval(evaluate, intervalMs);
+  return {
+    stop: async () => {
+      clearInterval(timer);
+    }
+  };
+}
+
 const isEntrypoint =
   process.argv[1]?.replaceAll("\\", "/").endsWith("/src/main.ts") ||
   process.argv[1]?.replaceAll("\\", "/").endsWith("/dist/main.js");
 
 if (isEntrypoint) {
   const unlock = process.argv.includes("--unlock");
-  runOnce(statePath(), { unlock }).catch((error: unknown) => {
-    process.stderr.write(`Killswitch startup failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
-    process.exitCode = 1;
-  });
+  const once = process.argv.includes("--once");
+  const state = statePath();
+
+  if (unlock) {
+    runOnce(state, { unlock }).catch((error: unknown) => {
+      process.stderr.write(`Killswitch unlock failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+      process.exitCode = 1;
+    });
+  } else if (once) {
+    runOnce(state).catch((error: unknown) => {
+      process.stderr.write(`Killswitch run failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+      process.exitCode = 1;
+    });
+  } else {
+    const monitor = startKillswitchMonitor(state, {
+      onError: (error: unknown) => {
+        process.stderr.write(`killswitch evaluation failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+      }
+    });
+    const shutdown = (): void => {
+      void monitor.stop();
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    process.stdout.write(`${JSON.stringify({ service: "killswitch", action: "monitor_started", state })}\n`);
+  }
 }

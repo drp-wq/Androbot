@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { persistKillswitchLock, readKillswitchLock } from "@solana-system/shared";
 import { createServer } from "../src/server.js";
 
 async function withServer(
@@ -52,6 +53,45 @@ test("control API fails closed when disabled", async () => {
     assert.equal(response.statusCode, 403);
     assert.equal((response.json() as { error: string }).error, "control_api_disabled");
   });
+});
+
+test("readiness reports not-ready while the killswitch lock is engaged", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "backend-test-"));
+  const app = createServer({ autostart: false, env: { NODE_ENV: "test", STATE_DIR: directory } });
+  try {
+    await persistKillswitchLock(join(directory, "killswitch-state.json"), "panic:manual");
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    const body = response.json() as { ready: boolean; locked: boolean };
+    assert.equal(body.ready, false);
+    assert.equal(body.locked, true);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("panic writes a durable killswitch lock", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "backend-test-"));
+  const env = { NODE_ENV: "test", STATE_DIR: directory, ENABLE_CONTROL_API: "true", CONTROL_API_TOKEN: "test-token-1234567890" };
+  const app = createServer({ autostart: false, env });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/control/panic",
+      headers: { authorization: "Bearer test-token-1234567890" },
+      payload: { reason: "test-panic" }
+    });
+    assert.equal(response.statusCode, 200);
+    const read = await readKillswitchLock(join(directory, "killswitch-state.json"));
+    assert.equal(read.ok, true);
+    if (read.ok) {
+      assert.equal(read.state.locked, true);
+      assert.equal(read.state.reason, "panic:test-panic");
+    }
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("control API requires a matching token", async () => {

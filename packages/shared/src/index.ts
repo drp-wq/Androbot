@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { z } from "zod";
+import { isValidSolanaAddress } from "./address.js";
+
+export * from "./address.js";
+export * from "./killswitch.js";
 
 export const NetworkSchema = z.enum(["devnet", "mainnet"]);
 export type Network = z.infer<typeof NetworkSchema>;
@@ -33,7 +38,8 @@ export const RuntimeConfigSchema = z
     scannerIntervalMs: z.number().int().min(100).max(3_600_000).default(5_000),
     enableControlApi: z.boolean().default(false),
     controlApiToken: z.string().min(16).optional(),
-    stateDir: z.string().min(1).default(".local")
+    stateDir: z.string().min(1).default(".local"),
+    killswitchStatePath: z.string().min(1).default(".local/killswitch-state.json")
   })
   .strict();
 
@@ -60,6 +66,7 @@ function parsePositiveInt(value: string | undefined, fallback: number, name: str
  * mainnet or live mode without the explicit safety acknowledgement throws.
  */
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
+  const stateDir = env.STATE_DIR ?? ".local";
   const config = RuntimeConfigSchema.parse({
     nodeEnv: env.NODE_ENV ?? "development",
     network: env.NETWORK ?? "devnet",
@@ -81,7 +88,8 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     scannerIntervalMs: parsePositiveInt(env.SCANNER_INTERVAL_MS, 5_000, "SCANNER_INTERVAL_MS"),
     enableControlApi: parseBoolean(env.ENABLE_CONTROL_API, false),
     ...(env.CONTROL_API_TOKEN === undefined ? {} : { controlApiToken: env.CONTROL_API_TOKEN }),
-    stateDir: env.STATE_DIR ?? ".local"
+    stateDir,
+    killswitchStatePath: env.KILLSWITCH_STATE_PATH ?? join(stateDir, "killswitch-state.json")
   });
 
   if (config.network === "mainnet" && !config.mainnetTradingEnabled) {
@@ -134,7 +142,7 @@ export interface AuditEvent {
 export const TradeIntentSchema = z
   .object({
     idempotencyKey: z.string().uuid(),
-    mintAddress: z.string().min(32).max(44),
+    mintAddress: z.string().refine(isValidSolanaAddress, "mintAddress must be a base58-encoded 32-byte Solana address"),
     side: z.enum(["buy", "sell"]),
     amountLamports: z.number().int().positive().safe(),
     maxSlippageBps: z.number().int().min(1).max(1000)
