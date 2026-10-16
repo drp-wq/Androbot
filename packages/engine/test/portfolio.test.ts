@@ -34,6 +34,36 @@ test("rejects a buy when cash is insufficient", () => {
   assert.throws(() => portfolio.applyBuy("mintA", "AAA", 100n, 10n, 0n), /Insufficient cash/);
 });
 
+test("restores a reconciled snapshot and refuses invalid ones", () => {
+  const portfolio = new Portfolio(1_000n);
+  portfolio.restoreFromSnapshot({
+    cashLamports: 500n,
+    positions: [{ mint: "mintA", symbol: "AAA", quantityTokens: 7n, averageEntryLamports: 50n, openedAt: "2026-01-01T00:00:00.000Z" }],
+    realizedPnlLamports: -10n,
+    feesPaidLamports: 3n,
+    dayStartEquityLamports: 1_000n,
+    utcDay: "2026-01-02"
+  });
+  assert.equal(portfolio.cashLamports(), 500n);
+  assert.equal(portfolio.openPositionsCount(), 1);
+  assert.equal(portfolio.getPosition("mintA")?.quantityTokens, 7n);
+  assert.equal(portfolio.snapshot().utcDay, "2026-01-02");
+
+  assert.throws(
+    () =>
+      portfolio.restoreFromSnapshot({
+        cashLamports: -1n,
+        positions: [],
+        realizedPnlLamports: 0n,
+        feesPaidLamports: 0n,
+        dayStartEquityLamports: 0n,
+        utcDay: "2026-01-02"
+      }),
+    /must not be negative/
+  );
+  assert.equal(portfolio.cashLamports(), 500n);
+});
+
 test("memory ledger appends immutable entries with ids", async () => {
   const ledger = new MemoryLedger();
   const first = await ledger.append({ type: "intent", data: { side: "buy" } });

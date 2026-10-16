@@ -38,6 +38,35 @@ export class Portfolio {
     };
   }
 
+  /**
+   * Replaces all portfolio state with a reconciled snapshot. This is used to restore
+   * accounting from the append-only ledger on startup. The snapshot is validated
+   * before any state changes, so an invalid snapshot leaves the portfolio untouched.
+   */
+  restoreFromSnapshot(snapshot: PortfolioSnapshot): void {
+    if (snapshot.cashLamports < 0n) throw new Error("Snapshot cash must not be negative.");
+    if (snapshot.feesPaidLamports < 0n) throw new Error("Snapshot fees must not be negative.");
+    if (snapshot.dayStartEquityLamports < 0n) throw new Error("Snapshot day-start equity must not be negative.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshot.utcDay)) throw new Error("Snapshot utcDay must be YYYY-MM-DD.");
+
+    const restored = new Map<Mint, Position>();
+    for (const position of snapshot.positions) {
+      if (position.mint.trim() === "") throw new Error("Snapshot position mint must not be empty.");
+      if (restored.has(position.mint)) throw new Error(`Snapshot has duplicate position for ${position.mint}.`);
+      if (position.quantityTokens <= 0n) throw new Error("Snapshot position quantity must be positive.");
+      if (position.averageEntryLamports <= 0n) throw new Error("Snapshot position entry price must be positive.");
+      restored.set(position.mint, { ...position });
+    }
+
+    this.cash = snapshot.cashLamports;
+    this.realizedPnl = snapshot.realizedPnlLamports;
+    this.feesPaid = snapshot.feesPaidLamports;
+    this.dayStartEquity = snapshot.dayStartEquityLamports;
+    this.currentUtcDay = snapshot.utcDay;
+    this.positionMap.clear();
+    for (const [mint, position] of restored) this.positionMap.set(mint, position);
+  }
+
   cashLamports(): bigint {
     return this.cash;
   }

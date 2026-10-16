@@ -22,6 +22,7 @@ import type {
   MarketDataSource,
   MarketQuote,
   Mint,
+  PortfolioSnapshot,
   PricePoint,
   SafetyPolicy,
   SolanaClient,
@@ -171,6 +172,21 @@ export class AutonomousTrader {
 
   panic(reason: string): void {
     this.pause(`panic:${reason}`);
+  }
+
+  /**
+   * Restores portfolio accounting from a reconciled ledger snapshot. Only accepts a
+   * snapshot produced by `reconcilePortfolioFromLedger`; invalid snapshots throw and
+   * leave the current portfolio untouched.
+   */
+  restorePortfolio(snapshot: PortfolioSnapshot): void {
+    this.deps.portfolio.restoreFromSnapshot(snapshot);
+    this.record("info", "portfolio_restored", null, {
+      cashLamports: snapshot.cashLamports.toString(),
+      positions: snapshot.positions.length,
+      realizedPnlLamports: snapshot.realizedPnlLamports.toString(),
+      utcDay: snapshot.utcDay
+    });
   }
 
   isPaused(): boolean {

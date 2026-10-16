@@ -1,8 +1,10 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { timingSafeEqual } from "node:crypto";
+import { reconcilePortfolioFromLedger, type LedgerReconciliationResult } from "@solana-system/engine";
 import {
   createJsonLogger,
   isKillswitchLocked,
+  isPaperMode,
   loadEnvFileIfPresent,
   loadRuntimeConfig,
   persistKillswitchLock,
@@ -48,6 +50,55 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
 
   const stack: TradingStack = buildTradingStack(config, logger, env);
 
+  let reconciliation: LedgerReconciliationResult | null = null;
+
+  // Restore paper accounting from the append-only ledger before the app starts
+  // serving or ticking. Fastify runs onReady hooks before listen()/inject() resolve,
+  // so the trader never processes an order against an empty portfolio when a
+  // reconciled one exists. A failed reconciliation pauses trading (fail closed).
+  app.addHook("onReady", async () => {
+    if (!isPaperMode(config)) return;
+    reconciliation = await reconcilePortfolioFromLedger({
+      ledger: stack.ledger,
+      startingCashLamports: BigInt(config.paperStartingBalanceLamports)
+    });
+
+    if (reconciliation.ok && reconciliation.snapshot !== null) {
+      stack.trader.restorePortfolio(reconciliation.snapshot);
+      logger.info(
+        {
+          fillsApplied: reconciliation.fillsApplied,
+          entriesRead: reconciliation.entriesRead,
+          duplicatesSkipped: reconciliation.duplicatesSkipped,
+          lastEntryAt: reconciliation.lastEntryAt
+        },
+        "ledger reconciled into portfolio"
+      );
+      await stack.ledger.append({
+        type: "event",
+        data: {
+          action: "ledger_reconciled",
+          entriesRead: reconciliation.entriesRead,
+          fillsApplied: reconciliation.fillsApplied,
+          duplicatesSkipped: reconciliation.duplicatesSkipped,
+          lastEntryAt: reconciliation.lastEntryAt ?? "none"
+        }
+      });
+      return;
+    }
+
+    stack.trader.pause("ledger_reconciliation_failed");
+    logger.error({ problems: reconciliation.problems }, "ledger reconciliation failed; trading paused");
+    try {
+      await stack.ledger.append({
+        type: "event",
+        data: { action: "ledger_reconciliation_failed", problems: reconciliation.problems.join(",") }
+      });
+    } catch (error) {
+      logger.error({ error: error instanceof Error ? error.message : "unknown" }, "could not record reconciliation failure");
+    }
+  });
+
   const authorizeControl = (request: FastifyRequest, reply: FastifyReply): boolean => {
     if (!config.enableControlApi) {
       void reply.code(403).send({ error: "control_api_disabled", detail: "Set ENABLE_CONTROL_API=true and CONTROL_API_TOKEN to allow control actions." });
@@ -73,14 +124,19 @@ export function createServer(options: ServerOptions = {}): FastifyInstance {
   app.get("/ready", async () => {
     const lock = await readKillswitchLock(config.killswitchStatePath);
     const locked = isKillswitchLocked(lock);
+    const reconciliationOk = reconciliation === null || reconciliation.ok;
     return {
-      ready: !locked,
+      ready: !locked && reconciliationOk,
       locked,
       lockReason: !lock.ok ? lock.error : lock.state.reason,
       mode: config.tradingMode,
+      reconciled: reconciliation === null ? null : reconciliation.ok,
+      fillsReplayed: reconciliation?.fillsApplied ?? 0,
       note: locked
         ? "Killswitch lock is engaged. Trading is halted until the lock is explicitly cleared."
-        : "Paper mode is the default. Live execution is disabled until a reviewed signer and DEX router exist."
+        : reconciliationOk
+          ? "Paper mode is the default. Live execution is disabled until a reviewed signer and DEX router exist."
+          : "Ledger reconciliation failed. Trading is paused until an operator inspects the ledger."
     };
   });
 
