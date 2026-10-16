@@ -1,11 +1,35 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { dailyLossLamports } from "@solana-system/risk";
 import type { Ledger, LedgerEntry, Mint, PortfolioSnapshot, Position } from "./types.js";
 
 export function utcDay(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+function isEnoent(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+/** Genesis link for the ledger hash chain. */
+export const LEDGER_GENESIS_HASH = "0".repeat(64);
+
+/** Deterministic JSON with object keys sorted, so a re-parse hashes identically. */
+function canonicalize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0
+    );
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalize(entry)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function computeLedgerHash(prevHash: string, entry: Omit<LedgerEntry, "hash" | "prevHash">): string {
+  const body = canonicalize({ id: entry.id, at: entry.at, type: entry.type, data: entry.data });
+  return createHash("sha256").update(prevHash).update("\n").update(body).digest("hex");
 }
 
 /**
@@ -167,27 +191,67 @@ export class MemoryLedger implements Ledger {
 
 /** Append-only JSONL ledger. A write-ahead intent is flushed before execution. */
 export class FileLedger implements Ledger {
+  private lastHash: string | null = null;
+  private tail: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly filePath: string) {}
 
-  async append(entry: Omit<LedgerEntry, "id" | "at">): Promise<LedgerEntry> {
-    const stored: LedgerEntry = { ...entry, id: randomUUID(), at: new Date().toISOString() };
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await appendFile(this.filePath, `${JSON.stringify(stored)}\n`, "utf8");
+  append(entry: Omit<LedgerEntry, "id" | "at">): Promise<LedgerEntry> {
+    const run = this.tail.then(() => this.appendChained(entry));
+    this.tail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async appendChained(entry: Omit<LedgerEntry, "id" | "at">): Promise<LedgerEntry> {
+    const prevHash = this.lastHash ?? (await this.readTailHash());
+    const base: Omit<LedgerEntry, "hash" | "prevHash"> = { ...entry, id: randomUUID(), at: new Date().toISOString() };
+    const stored: LedgerEntry = { ...base, prevHash, hash: computeLedgerHash(prevHash, base) };
+    await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });
+    await appendFile(this.filePath, `${JSON.stringify(stored)}\n`, { encoding: "utf8", mode: 0o600 });
+    this.lastHash = stored.hash ?? prevHash;
     return stored;
   }
 
+  private async readTailHash(): Promise<string> {
+    const entries = await this.readAll();
+    const last = entries[entries.length - 1];
+    this.lastHash = last?.hash ?? LEDGER_GENESIS_HASH;
+    return this.lastHash;
+  }
+
+  /**
+   * Reads and verifies the ledger. The hash chain is recomputed for every line, so
+   * a truncated, reordered or edited entry is rejected. This is tamper-evident
+   * (not tamper-proof) against accidental corruption and naive injection; a writer
+   * with full file access can still rewrite the chain, which is why the file is
+   * created `0600`.
+   */
   async readAll(): Promise<readonly LedgerEntry[]> {
+    let raw: string;
     try {
-      const raw = await readFile(this.filePath, "utf8");
-      return raw
-        .split("\n")
-        .filter((line) => line.trim() !== "")
-        .map((line) => JSON.parse(line) as LedgerEntry);
+      raw = await readFile(this.filePath, "utf8");
     } catch (error) {
-      if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-        return [];
-      }
+      if (isEnoent(error)) return [];
       throw error;
     }
+
+    const entries: LedgerEntry[] = [];
+    let previous = LEDGER_GENESIS_HASH;
+    for (const line of raw.split("\n")) {
+      if (line.trim() === "") continue;
+      const parsed = JSON.parse(line) as LedgerEntry;
+      if (typeof parsed.hash !== "string" || typeof parsed.prevHash !== "string") {
+        throw new Error("Ledger entry is missing its hash chain; refusing to trust the ledger.");
+      }
+      if (parsed.prevHash !== previous) {
+        throw new Error("Ledger hash chain is broken; refusing to trust the ledger.");
+      }
+      if (computeLedgerHash(parsed.prevHash, parsed) !== parsed.hash) {
+        throw new Error("Ledger entry hash does not match its contents; refusing to trust the ledger.");
+      }
+      previous = parsed.hash;
+      entries.push(parsed);
+    }
+    return entries;
   }
 }

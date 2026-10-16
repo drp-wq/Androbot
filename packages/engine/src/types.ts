@@ -115,6 +115,13 @@ export interface LedgerEntry {
   readonly at: string;
   readonly type: LedgerEntryType;
   readonly data: Readonly<Record<string, unknown>>;
+  /**
+   * Tamper-evident hash chain. `prevHash` links to the previous entry's `hash`
+   * (or the genesis hash for the first entry). Entries written before chaining
+   * was introduced may omit these; `FileLedger.readAll` rejects unchained entries.
+   */
+  readonly prevHash?: string;
+  readonly hash?: string;
 }
 
 export interface Ledger {
