@@ -55,3 +55,38 @@ test("HTTP market feed fails closed on malformed or failed payloads", async () =
   });
   await assert.rejects(() => badHistory.getHistory(MINT), /malformed/);
 });
+
+test("HTTP market feed retries transient failures and bounds the response size", async () => {
+  let attempts = 0;
+  const flaky = (async () => {
+    attempts += 1;
+    if (attempts < 2) return jsonResponse({}, false, 503);
+    return jsonResponse({ symbol: "WSOL", priceLamports: "1000", liquidityLamports: 5000, lpBurnedOrLocked: true });
+  }) as unknown as typeof fetch;
+  const retrying = new HttpMarketDataSource({
+    id: "http",
+    baseUrl: "http://feed.invalid",
+    markets: [MINT],
+    fetchImpl: flaky,
+    policy: { maxRetries: 2, retryBaseDelayMs: 1 }
+  });
+  assert.equal((await retrying.getQuote(MINT)).priceLamports, 1000n);
+  assert.equal(attempts, 2);
+
+  const oversized = new HttpMarketDataSource({
+    id: "http",
+    baseUrl: "http://feed.invalid",
+    markets: [MINT],
+    fetchImpl: (async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("x".repeat(200)));
+            controller.close();
+          }
+        })
+      )) as unknown as typeof fetch,
+    policy: { maxResponseBytes: 50, maxRetries: 0 }
+  });
+  await assert.rejects(() => oversized.getQuote(MINT), /exceeds/);
+});

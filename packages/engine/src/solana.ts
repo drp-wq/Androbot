@@ -1,4 +1,5 @@
 import { PAPER_MARKETS } from "./market.js";
+import { fetchWithRetry, parseJsonWithLimit, resolveHttpPolicy, type HttpPolicy } from "./http.js";
 import type { Mint, SellSimulation, SolanaClient, TokenAccountFacts } from "./types.js";
 
 const PAPER_DECIMALS: Record<Mint, number> = {
@@ -53,6 +54,7 @@ export interface RpcSolanaConfig {
   readonly id: string;
   readonly rpcUrl: string;
   readonly fetchImpl?: typeof fetch;
+  readonly policy?: Partial<HttpPolicy>;
 }
 
 /**
@@ -64,20 +66,27 @@ export class RpcSolanaClient implements SolanaClient {
   readonly id: string;
   readonly isLive = true;
   private readonly fetchImpl: typeof fetch;
+  private readonly policy: HttpPolicy;
 
   constructor(private readonly config: RpcSolanaConfig) {
     this.id = config.id;
     this.fetchImpl = config.fetchImpl ?? fetch;
+    this.policy = resolveHttpPolicy(config.policy);
   }
 
   private async call(method: string, params: readonly unknown[]): Promise<unknown> {
-    const response = await this.fetchImpl(this.config.rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
-    });
+    const response = await fetchWithRetry(
+      this.fetchImpl,
+      this.config.rpcUrl,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+      },
+      this.policy
+    );
     if (!response.ok) throw new Error(`RPC responded ${response.status} for ${method}.`);
-    const payload = (await response.json()) as JsonRpcResponse;
+    const payload = (await parseJsonWithLimit(response, this.policy.maxResponseBytes)) as JsonRpcResponse;
     if (payload.error !== undefined || payload.result === undefined) {
       throw new Error(`RPC error for ${method}: ${String(payload.error?.message ?? "missing result")}.`);
     }

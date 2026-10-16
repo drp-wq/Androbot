@@ -1,4 +1,5 @@
 import type { MarketDataSource, MarketQuote, Mint, PricePoint } from "./types.js";
+import { fetchWithRetry, parseJsonWithLimit, resolveHttpPolicy, type HttpPolicy } from "./http.js";
 
 interface SimulatedMarket {
   readonly mint: Mint;
@@ -122,6 +123,7 @@ export interface HttpMarketConfig {
   readonly baseUrl: string;
   readonly markets: readonly Mint[];
   readonly fetchImpl?: typeof fetch;
+  readonly policy?: Partial<HttpPolicy>;
 }
 
 interface HttpQuotePayload {
@@ -145,10 +147,12 @@ export class HttpMarketDataSource implements MarketDataSource {
   readonly id: string;
   readonly isLive = true;
   private readonly fetchImpl: typeof fetch;
+  private readonly policy: HttpPolicy;
 
   constructor(private readonly config: HttpMarketConfig) {
     this.id = config.id;
     this.fetchImpl = config.fetchImpl ?? fetch;
+    this.policy = resolveHttpPolicy(config.policy);
   }
 
   async listMarkets(): Promise<readonly Mint[]> {
@@ -158,9 +162,9 @@ export class HttpMarketDataSource implements MarketDataSource {
   async getQuote(mint: Mint): Promise<MarketQuote> {
     const url = new URL("/quote", this.config.baseUrl);
     url.searchParams.set("mint", mint);
-    const response = await this.fetchImpl(url.toString());
+    const response = await fetchWithRetry(this.fetchImpl, url.toString(), {}, this.policy);
     if (!response.ok) throw new Error(`Market feed responded ${response.status} for ${mint}.`);
-    const payload = (await response.json()) as HttpQuotePayload;
+    const payload = (await parseJsonWithLimit(response, this.policy.maxResponseBytes)) as HttpQuotePayload;
     const price = parseLamports(payload.priceLamports);
     const liquidity = parseLamports(payload.liquidityLamports);
     if (price === null || liquidity === null) throw new Error("Market feed payload is missing a valid price or liquidity.");
@@ -177,9 +181,9 @@ export class HttpMarketDataSource implements MarketDataSource {
   async getHistory(mint: Mint): Promise<readonly PricePoint[]> {
     const url = new URL("/history", this.config.baseUrl);
     url.searchParams.set("mint", mint);
-    const response = await this.fetchImpl(url.toString());
+    const response = await fetchWithRetry(this.fetchImpl, url.toString(), {}, this.policy);
     if (!response.ok) throw new Error(`Market feed responded ${response.status} for ${mint} history.`);
-    const payload = (await response.json()) as unknown;
+    const payload = await parseJsonWithLimit(response, this.policy.maxResponseBytes);
     if (!Array.isArray(payload)) throw new Error("Market history payload must be an array.");
     return payload.map((entry) => {
       const point = entry as { at?: unknown; priceLamports?: unknown; liquidityLamports?: unknown };

@@ -74,7 +74,59 @@ test("RPC client fails closed on malformed responses", async () => {
   const http500 = new RpcSolanaClient({
     id: "rpc",
     rpcUrl: "http://rpc.invalid",
-    fetchImpl: (async () => jsonResponse({}, false, 500)) as unknown as typeof fetch
+    fetchImpl: (async () => jsonResponse({}, false, 500)) as unknown as typeof fetch,
+    policy: { maxRetries: 0 }
   });
   await assert.rejects(() => http500.getSlot(), /RPC responded 500/);
+});
+
+test("RPC client aborts a request that exceeds its timeout", async () => {
+  const hanging = ((_url: string, init: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+    })) as unknown as typeof fetch;
+  const client = new RpcSolanaClient({ id: "rpc", rpcUrl: "http://rpc.invalid", fetchImpl: hanging, policy: { timeoutMs: 10, maxRetries: 0 } });
+  await assert.rejects(() => client.getSlot(), /aborted/);
+});
+
+test("RPC client rejects a response body above the size cap", async () => {
+  const oversized = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(200)));
+        controller.close();
+      }
+    }),
+    { status: 200 }
+  );
+  const client = new RpcSolanaClient({
+    id: "rpc",
+    rpcUrl: "http://rpc.invalid",
+    fetchImpl: (async () => oversized) as unknown as typeof fetch,
+    policy: { maxResponseBytes: 50, maxRetries: 0 }
+  });
+  await assert.rejects(() => client.getSlot(), /exceeds/);
+});
+
+test("RPC client retries transient failures a bounded number of times", async () => {
+  let attempts = 0;
+  const flaky = (async () => {
+    attempts += 1;
+    if (attempts < 3) return jsonResponse({}, false, 503);
+    return jsonResponse({ result: 7 });
+  }) as unknown as typeof fetch;
+  const client = new RpcSolanaClient({ id: "rpc", rpcUrl: "http://rpc.invalid", fetchImpl: flaky, policy: { maxRetries: 2, retryBaseDelayMs: 1 } });
+  assert.equal(await client.getSlot(), 7);
+  assert.equal(attempts, 3);
+});
+
+test("RPC client does not retry a definitive 4xx response", async () => {
+  let attempts = 0;
+  const bad = (async () => {
+    attempts += 1;
+    return jsonResponse({}, false, 400);
+  }) as unknown as typeof fetch;
+  const client = new RpcSolanaClient({ id: "rpc", rpcUrl: "http://rpc.invalid", fetchImpl: bad, policy: { maxRetries: 2, retryBaseDelayMs: 1 } });
+  await assert.rejects(() => client.getSlot(), /RPC responded 400/);
+  assert.equal(attempts, 1);
 });
