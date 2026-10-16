@@ -8,9 +8,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "build": "tsc --noEmit",
-    "lint": "eslint App.tsx index.ts",
+    "lint": "eslint App.tsx index.ts src test",
     "typecheck": "tsc --noEmit",
-    "test": "node --test",
+    "test": "node --test test/*.test.ts",
     "clean": "rimraf .expo"
   },
   "dependencies": {
