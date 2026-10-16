@@ -12,7 +12,12 @@
     "test": "tsx --test test/*.test.ts",
     "clean": "rimraf dist"
   },
-  "dependencies": { "@solana-system/shared": "workspace:*", "fastify": "5.2.0" },
+  "dependencies": {
+    "@solana-system/engine": "workspace:*",
+    "@solana-system/risk": "workspace:*",
+    "@solana-system/shared": "workspace:*",
+    "fastify": "5.2.0"
+  },
   "devDependencies": {
     "@types/node": "22.10.2",
     "eslint": "9.17.0",
